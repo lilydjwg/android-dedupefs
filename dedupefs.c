@@ -10,18 +10,10 @@
 
 static const char *dedupefsVersion = "0.1";
 
-#include<sys/types.h>
-#include<sys/stat.h>
-#include<sys/statvfs.h>
 #include<stdio.h>
-#include<strings.h>
 #include<stdlib.h>
 #include<string.h>
-#include<assert.h>
 #include<errno.h>
-#include<fcntl.h>
-#include<sys/xattr.h>
-#include<dirent.h>
 #include<unistd.h>
 #include<fuse.h>
 #include<gdbm.h>
