@@ -1,5 +1,5 @@
 /*
- * dedupefs - The filesystem for Android dedupe backup.
+ * dedupefs - A filesystem for Android dedupe backup.
  *
  * Most code is copied from rofs.
  * GPLv2.
@@ -144,7 +144,7 @@ static int callback_readlink(const char *path, char *buf, size_t size){
           size -= n;
         }
       }
-      /* strip data or system */
+      /* strip data or system; this will be correct for the most of time */
       link = strchr(link+1, '/') + 1;
     }
     memcpy(buf, link, MIN(size, strlen(link)+1));
