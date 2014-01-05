@@ -25,25 +25,33 @@ static const char *dedupefsVersion = "0.1";
 #include<unistd.h>
 #include<fuse.h>
 #include<gdbm.h>
+#include<pthread.h>
 
 GDBM_FILE db;
+pthread_mutex_t dblock = PTHREAD_MUTEX_INITIALIZER;
 char *dbpath;
 
 #pragma pack(push, 1)
 struct fentry {
-  char type;
-  char pad;
   unsigned short mode;
+  char type;
+  char pad[5];
   uint32_t uid;
   uint32_t gid;
   uint64_t atime;
   uint64_t mtime;
   uint64_t ctime;
   uint64_t size;
-  char* path;
-  char* extra;
+  char extra[1];
 };
 #pragma pack(pop)
+
+#define NONEXIST_RETURN(x) \
+  if((x).dptr == NULL){ \
+    return -ENOENT; \
+  }
+#define FENTRY(x) ((struct fentry*)(x).dptr)
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 /* Translate an dedupefs path into it's underlying filesystem path */
 static char *translate_path(const char *path){
@@ -72,12 +80,14 @@ static void db_fetch_for_path(const char* path, char type, datum* result){
     .dsize = plen
   };
 
+  pthread_mutex_lock(&dblock);
   *result = gdbm_fetch(db, key);
+  pthread_mutex_unlock(&dblock);
   free(p);
 }
 
-static void parse_file_info(const datum *d, struct stat* st){
-  struct fentry *f = (struct fentry*) d->dptr;
+static void fileinfo2stat(const datum *d, struct stat* st){
+  struct fentry *f = FENTRY(*d);
   //FIXME
   st->st_mode = f->mode;
   switch(f->type){
@@ -105,26 +115,42 @@ static void parse_file_info(const datum *d, struct stat* st){
 static int callback_getattr(const char *path, struct stat *st_data){
   datum result;
   db_fetch_for_path(path, 'f', &result);
-  if(result.dptr == NULL){
-    return -ENOENT;
-  }
-  parse_file_info(&result, st_data);
+  NONEXIST_RETURN(result);
+  fileinfo2stat(&result, st_data);
+  free(result.dptr);
   printf("done getattr with %s.\n", path);
   return 0;
 }
 
 static int callback_readlink(const char *path, char *buf, size_t size){
-  int res;
-  char *ipath;
-  ipath = translate_path(path);
+  datum result;
+  db_fetch_for_path(path, 'f', &result);
+  NONEXIST_RETURN(result);
 
-  res = readlink(ipath, buf, size - 1);
-  free(ipath);
-  if(res == -1){
-    return -errno;
+  int res = 0;
+  char *link = FENTRY(result)->extra;
+  if(FENTRY(result)->type != 'l'){
+    res = -EINVAL;
+  }else{
+    if(link[0] == '/'){
+      /* force to use relative path */
+      const char *p = path;
+      int n;
+      while(*p++){
+        if(*p == '/'){
+          n = MIN(size, 3);
+          memcpy(buf, "../", n);
+          buf += n;
+          size -= n;
+        }
+      }
+      /* strip data or system */
+      link = strchr(link+1, '/') + 1;
+    }
+    memcpy(buf, link, MIN(size, strlen(link)+1));
   }
-  buf[res] = '\0';
-  return 0;
+  free(result.dptr);
+  return res;
 }
 
 static int callback_readdir(const char *path, void *buf,
@@ -135,14 +161,19 @@ static int callback_readdir(const char *path, void *buf,
   datum result;
   db_fetch_for_path(path, 'd', &result);
   if(result.dptr == NULL){
+    //TODO: ENOTDIR or ENOENT
     return -ENOTDIR;
   }
 
   char *name = result.dptr;
-  while(*name){
+  filler(buf, "..", NULL, 0);
+  printf("readdir: [%s]\n", name);
+  while(name < result.dptr + result.dsize){
+    printf("readdir: [%s]\n", name);
     filler(buf, name, NULL, 0);
     name += strlen(name) + 1;
   }
+  free(result.dptr);
 
   return 0;
 }
@@ -300,21 +331,21 @@ static int callback_fsync(const char *path, int crap,
 }
 
 static int callback_access(const char *path, int mode){
-  int res;
-  char *ipath;
-  ipath = translate_path(path);
-
-  /* Don't pretend that we allow writing
-   * Chris AtLee <chris@atlee.ca>
-   */
   if(mode & W_OK)
     return -EROFS;
 
-  res = access(ipath, mode);
-  free(ipath);
-  if(res == -1){
-    return -errno;
+  datum result;
+  int res;
+
+  db_fetch_for_path(path, 'f', &result);
+  NONEXIST_RETURN(result);
+
+  if(mode & X_OK && !(FENTRY(result)->mode & S_IXUSR)){
+    res = -EACCES;
+  }else{
+    res = 0;
   }
+  free(result.dptr);
   return res;
 }
 

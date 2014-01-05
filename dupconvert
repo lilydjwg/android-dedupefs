@@ -17,8 +17,12 @@ class Store:
   def add_entry(self, entry):
     db = self.db
     d = entry.dir.encode('utf-8')
-    db[b'd'+d] = db.get(b'd'+d, b'') + entry.path.encode('utf-8') + b'\0'
-    db[b'f'+entry.fullpath.encode('utf-8')] = entry.pack_inode()
+    if entry.path:
+      db[b'd'+d] = db.get(b'd'+d, b'') + entry.path.encode('utf-8') + b'\0'
+    fp = entry.fullpath.encode('utf-8')
+    db[b'f'+fp] = entry.pack_inode()
+    if entry.type == 'd' and b'd'+fp not in db:
+      db[b'd'+fp] = b'.\0'
 
   def close(self):
     self.db.close()
@@ -43,23 +47,29 @@ class fentry:
     if type == 'f' and len(extra) != 65:
       raise ValueError('bad hash value: %s' % extra)
     self.extra = extra
-    self.size = int(size)
+    if self.type == 'l':
+      self.size = len(self.extra)
+    else:
+      self.size = int(size)
 
   def __repr__(self):
     return '<%s: %s, type %s>' % (
       self.__class__.__name__, self.path, self.type)
 
   def pack_inode(self):
-    path = self.path.encode('utf-8')
+    # path = self.path.encode('utf-8')
     extra = self.extra.encode('utf-8')
-    fmt = '<cxHIIQQQQ%ds%ds' % (len(path) + 1, len(extra) + 1)
+    fmt = '<Hc5xIIQQQQ%dsc' % len(extra)
+    # fmt = '<Hc5xIIQQQQ%dsc%dsc' % (len(path), len(extra))
     value = struct.pack(
       fmt,
+      self.mode,
       self.type.encode('utf-8'),
-      self.mode, self.uid, self.gid,
+      self.uid, self.gid,
       self.atime, self.mtime, self.ctime,
       self.size,
-      path, extra,
+      # path, b'\0',
+      extra, b'\0',
     )
     return value
 
@@ -82,6 +92,7 @@ def main(f, db):
   os.umask(mask)
   s.add_entry(fentry(
     'd', oct(0o777 & ~mask), os.getuid(), os.getgid(),
+    # TODO: better times
     0, 0, 0,
     './'))
   for entry in iter_fentries(f):
