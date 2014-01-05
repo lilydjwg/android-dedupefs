@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import struct
+import dbm.gnu
+import argparse
+
+# Storage
+#   'd' fullpath -> null-terminated filenames
+#   'f' fullpath -> pack_inode
+
+class Store:
+  def __init__(self, dbpath):
+    self.db = dbm.gnu.open(dbpath, 'nf')
+
+  def add_entry(self, entry):
+    db = self.db
+    d = entry.dir.encode('utf-8')
+    db[b'd'+d] = db.get(b'd'+d, b'') + entry.path.encode('utf-8') + b'\0'
+    db[b'f'+entry.fullpath.encode('utf-8')] = entry.pack_inode()
+
+  def close(self):
+    self.db.close()
+
+class fentry:
+  def __init__(self, type, mode, uid, gid, atime, mtime, ctime,
+               path, extra='', size=0):
+    if type not in 'fdl':
+      raise ValueError('unknown file type: %s' % type)
+
+    self.type = type
+    self.mode = int(mode, 8)
+    self.uid = int(uid)
+    self.gid = int(gid)
+    self.atime = int(atime)
+    self.mtime = int(mtime)
+    self.ctime = int(ctime)
+    if not path.startswith('./'):
+      raise ValueError('bad file path: %s' % path)
+    self.fullpath = path[1:]
+    self.dir, self.path = os.path.split(path[1:])
+    if type == 'f' and len(extra) != 65:
+      raise ValueError('bad hash value: %s' % extra)
+    self.extra = extra
+    self.size = int(size)
+
+  def __repr__(self):
+    return '<%s: %s, type %s>' % (
+      self.__class__.__name__, self.path, self.type)
+
+  def pack_inode(self):
+    path = self.path.encode('utf-8')
+    extra = self.extra.encode('utf-8')
+    fmt = '<cxHIIQQQQ%ds%ds' % (len(path) + 1, len(extra) + 1)
+    value = struct.pack(
+      fmt,
+      self.type.encode('utf-8'),
+      self.mode, self.uid, self.gid,
+      self.atime, self.mtime, self.ctime,
+      self.size,
+      path, extra,
+    )
+    return value
+
+  @classmethod
+  def parse(cls, l):
+    d = l.rstrip().split('\t')
+    return cls(*d)
+
+def iter_fentries(f):
+  for l in f:
+    yield fentry.parse(l)
+
+def main(f, db):
+  version = f.readline().strip()
+  if version != 'dedupe	2':
+    raise ValueError('not supported file format: %s' % version)
+
+  s = Store(db)
+  mask = os.umask(0)
+  os.umask(mask)
+  s.add_entry(fentry(
+    'd', oct(0o777 & ~mask), os.getuid(), os.getgid(),
+    0, 0, 0,
+    './'))
+  for entry in iter_fentries(f):
+    s.add_entry(entry)
+  s.close()
+
+if __name__ == '__main__':
+
+  parser = argparse.ArgumentParser(description='convert .dup file to database')
+  parser.add_argument('dupfile', type=argparse.FileType('r'),
+                      help='path to the .dup file')
+  parser.add_argument('dbfile',
+                      help='the database to be created (or overridden!)')
+  args = parser.parse_args()
+  main(args.dupfile, args.dbfile)
