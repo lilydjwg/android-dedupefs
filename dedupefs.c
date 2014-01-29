@@ -47,20 +47,6 @@ struct fentry {
 #define FENTRY(x) ((struct fentry*)(x).dptr)
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-/* Translate an dedupefs path into it's underlying filesystem path */
-static char *translate_path(const char *path){
-
-  char *rPath = malloc(sizeof(char) * (strlen(path) + strlen(dbpath) + 1));
-
-  strcpy(rPath, dbpath);
-  if(rPath[strlen(rPath) - 1] == '/'){
-    rPath[strlen(rPath) - 1] = '\0';
-  }
-  strcat(rPath, path);
-
-  return rPath;
-}
-
 static void db_fetch_for_path(const char* path, char type, datum* result){
   int plen = strlen(path) + 1;
   char *p = malloc(plen+1);
@@ -293,15 +279,12 @@ static int callback_write(const char *path, const char *buf, size_t size,
 
 static int callback_statfs(const char *path, struct statvfs *st_buf){
   int res;
-  char *ipath;
-  /* TODO */
-  ipath = translate_path(path);
+  res = statvfs(srcdir, st_buf);
 
-  res = statvfs(path, st_buf);
-  free(ipath);
   if(res == -1){
     return -errno;
   }
+
   return 0;
 }
 
