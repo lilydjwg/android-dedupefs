@@ -13,3 +13,5 @@ The you can mount it somewhere:
   ./dedupefs system.db /path/to/blobs/directory your_mount_point
 
 The filesystem is read-only.
+
+Lisence: GPLv2
