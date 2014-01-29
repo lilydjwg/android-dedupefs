@@ -22,7 +22,9 @@ static const char *dedupefsVersion = "0.1";
 GDBM_FILE db;
 pthread_mutex_t dblock = PTHREAD_MUTEX_INITIALIZER;
 char *dbpath;
+char *srcdir;
 
+#define PATH_LEN 4096
 #pragma pack(push, 1)
 struct fentry {
   unsigned short mode;
@@ -61,7 +63,7 @@ static char *translate_path(const char *path){
 
 static void db_fetch_for_path(const char* path, char type, datum* result){
   int plen = strlen(path) + 1;
-  char *p = malloc(plen);
+  char *p = malloc(plen+1);
   p[0] = type;
   memcpy(p+1, path, plen);
   fwrite(p, plen, 1, stdout);
@@ -80,7 +82,6 @@ static void db_fetch_for_path(const char* path, char type, datum* result){
 
 static void fileinfo2stat(const datum *d, struct stat* st){
   struct fentry *f = FENTRY(*d);
-  //FIXME
   st->st_mode = f->mode;
   switch(f->type){
     case 'f':
@@ -238,50 +239,45 @@ static int callback_utime(const char *path, struct utimbuf *buf){
 }
 
 static int callback_open(const char *path, struct fuse_file_info *finfo){
-  int res;
-
-  /* We allow opens, unless they're tring to write, sneaky
-   * people.
-   */
   int flags = finfo->flags;
 
   if((flags & O_WRONLY) || (flags & O_RDWR) || (flags & O_CREAT)
       || (flags & O_EXCL) || (flags & O_TRUNC) || (flags & O_APPEND)){
     return -EROFS;
   }
-  char *ipath;
-  ipath = translate_path(path);
 
-  res = open(ipath, flags);
+  char fpath[PATH_LEN];
+  datum result;
+  db_fetch_for_path(path, 'f', &result);
+  NONEXIST_RETURN(result);
 
-  free(ipath);
-  if(res == -1){
+  strncpy(fpath, srcdir, PATH_LEN);
+  fpath[MIN(strlen(srcdir), PATH_LEN-1)] = '/';
+  fpath[MIN(strlen(srcdir)+1, PATH_LEN-1)] = '\0';
+  strncat(fpath, FENTRY(result)->extra, PATH_LEN);
+  free(result.dptr);
+  printf("opening %s.\n", fpath);
+
+  int fd;
+  fd = open(fpath, flags);
+
+  if(fd == -1){
     return -errno;
+  }else{
+    finfo->fh = fd;
+    return 0;
   }
-  close(res);
-  return 0;
 }
 
 static int callback_read(const char *path, char *buf, size_t size,
     off_t offset, struct fuse_file_info *finfo){
-  int fd;
-  int res;
-  (void)finfo;
-  char *ipath;
 
-  ipath = translate_path(path);
-  fd = open(ipath, O_RDONLY);
-  free(ipath);
-  if(fd == -1){
-    res = -errno;
-    return res;
-  }
-  res = pread(fd, buf, size, offset);
-
+  size_t res;
+  lseek(finfo->fh, offset, SEEK_SET);
+  res = read(finfo->fh, buf, size);
   if(res == -1){
     res = -errno;
   }
-  close(fd);
   return res;
 }
 
@@ -298,6 +294,7 @@ static int callback_write(const char *path, const char *buf, size_t size,
 static int callback_statfs(const char *path, struct statvfs *st_buf){
   int res;
   char *ipath;
+  /* TODO */
   ipath = translate_path(path);
 
   res = statvfs(path, st_buf);
@@ -318,7 +315,7 @@ static int callback_fsync(const char *path, int crap,
     struct fuse_file_info *finfo){
   (void)path;
   (void)crap;
-  (void)finfo;
+  close(finfo->fh);
   return 0;
 }
 
@@ -372,12 +369,12 @@ enum {
 
 static void usage(const char *progname){
   fprintf(stdout,
-      "usage: %s dbpath mountpoint [options]\n"
+      "usage: %s dbpath srcdir mountpoint [options]\n"
       "\n"
       "   Mounts Android dedupe backup as a read-only mount at mountpoint\n"
       "\n"
       "general options:\n"
-      "   -o opt,[opt...]     mount options\n"
+      "   -o opt[,opt...]     mount options\n"
       "   -h  --help          print help\n"
       "   -V  --version       print version\n" "\n", progname);
 }
@@ -388,8 +385,11 @@ static int dedupefs_parse_opt(void *data, const char *arg, int key,
 
   switch (key){
   case FUSE_OPT_KEY_NONOPT:
-    if(dbpath == 0){
+    if(dbpath == NULL){
       dbpath = strdup(arg);
+      return 0;
+    }else if(srcdir == NULL){
+      srcdir = strdup(arg);
       return 0;
     }else{
       return 1;
@@ -427,8 +427,8 @@ int main(int argc, char *argv[]){
     fprintf(stderr, "see `%s -h' for usage\n", argv[0]);
     exit(1);
   }
-  if(dbpath == 0){
-    fprintf(stderr, "Missing dbpath\n");
+  if(dbpath == NULL || srcdir == NULL){
+    fprintf(stderr, "Missing dbpath or srcdir\n");
     fprintf(stderr, "see `%s -h' for usage\n", argv[0]);
     exit(1);
   }
@@ -444,5 +444,6 @@ int main(int argc, char *argv[]){
 
   res = fuse_main(args.argc, args.argv, &callback_oper, NULL);
   gdbm_close(db);
+  free(srcdir);
   return res;
 }
