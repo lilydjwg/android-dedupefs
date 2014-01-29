@@ -1,0 +1,15 @@
+dedupefs is a filesystem for reading Android dedupe backup. This format is used by xrecovery (See https://github.com/CyanogenMod/android_bootable_recovery/tree/cm-10.2/dedupe). The backup consists of two parts: some *.dup files and a directory full of files with hexdigit names.
+
+Usage:
+
+Have fuse and gdbm development files installed and run make to have the dedupefs binary compiled.
+
+Before mounting, you need convert a flat *.dup file to a GNUdbm database. You need Python 3 to run the script:
+
+  ./dupconvert /path/to/system.ext4.dup system.db
+
+The you can mount it somewhere:
+
+  ./dedupefs system.db /path/to/blobs/directory your_mount_point
+
+The filesystem is read-only.
