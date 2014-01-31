@@ -49,6 +49,8 @@ class fentry:
     self.extra = extra
     if self.type == 'l':
       self.size = len(self.extra)
+    elif self.type == 'd':
+      self.size = 4096
     else:
       self.size = int(size)
 

@@ -18,11 +18,13 @@ static const char *dedupefsVersion = "0.1";
 #include<fuse.h>
 #include<gdbm.h>
 #include<pthread.h>
+#include<sys/statvfs.h>
 
 GDBM_FILE db;
 pthread_mutex_t dblock = PTHREAD_MUTEX_INITIALIZER;
 char *dbpath;
 char *srcdir;
+unsigned long blksize;
 
 #define PATH_LEN 4096
 #pragma pack(push, 1)
@@ -89,6 +91,11 @@ static void fileinfo2stat(const datum *d, struct stat* st){
   st->st_atime = f->atime;
   st->st_mtime = f->mtime;
   st->st_ctime = f->ctime;
+  st->st_blksize = blksize;
+  st->st_blocks = f->size / 512;
+  if(f->size % 512 != 0){
+    st->st_blocks++;
+  }
 }
 
 static int callback_getattr(const char *path, struct stat *st_data){
@@ -424,6 +431,13 @@ int main(int argc, char *argv[]){
   }
   free(dbpath);
   dbpath = NULL;
+
+  struct statvfs vfs;
+  if(statvfs(srcdir, &vfs) != 0){
+    perror("statvfs");
+    exit(2);
+  }
+  blksize = vfs.f_bsize;
 
   res = fuse_main(args.argc, args.argv, &callback_oper, NULL);
   gdbm_close(db);
