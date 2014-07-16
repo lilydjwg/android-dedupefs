@@ -439,6 +439,15 @@ int main(int argc, char *argv[]){
   }
   blksize = vfs.f_bsize;
 
+  char *p = NULL;
+  p = realpath(srcdir, NULL);
+  if(!p){
+    perror("realpath for srcdir");
+    exit(2);
+  }
+  free(srcdir);
+  srcdir = p;
+
   res = fuse_main(args.argc, args.argv, &callback_oper, NULL);
   gdbm_close(db);
   free(srcdir);
