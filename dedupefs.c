@@ -296,9 +296,8 @@ static int callback_statfs(const char *path, struct statvfs *st_buf){
 }
 
 static int callback_release(const char *path, struct fuse_file_info *finfo){
-  (void)path;
-  (void)finfo;
-  return 0;
+  int res = close(finfo->fh);
+  return res;
 }
 
 static int callback_fsync(const char *path, int crap,
